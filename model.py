@@ -111,21 +111,30 @@ def sep_unique(str1, str2):
     
     return unique1, unique2
 
-def return_stopwords(str1):
+def return_stopwords(str1, stops = None):
+    if stops is None:
+        stops = set(stopwords.words('english'))
     
     set1 = set(str1)
-    stops = stopwords.words('english')
+    stops = set(stopwords.words('english'))
     
-    str_stopwords = [w for w in set1 if w in stops]
+    str_stopwords = list(set1.difference(stops))
     
     return str_stopwords
 
-def remove_stopwords(str1):
+def remove_stopwords(str1, str2 = None, stops = None):
+    if stops is None:
+        stops = set(stopwords.words('english'))
+        
+    if str2 == None:
+        set1 = set(str1)
+        
+        str_wo_stopwords = list(set1.difference(stops))
     
-    set1 = set(str1)
-    stops = stopwords.words('english')
-    
-    str_wo_stopwords = [w for w in set1 if w not in stops]
+    else:
+        set1 = set(str1)
+        set2 = set(str2)
+        str_wo_stopwords = list(set1.difference(set2))
     
     return str_wo_stopwords
 
@@ -174,6 +183,7 @@ def wm_distance(str1, str2, bed):
 
 def feature_gen(df, extended = False):
     features = pd.DataFrame(index = df.index)
+    stops = set(stopwords.words('english'))
     
     if not extended:
         # Tokenize questions removing non alphanumeric characters
@@ -182,18 +192,31 @@ def feature_gen(df, extended = False):
         df['q2_token'] = df.apply(lambda x: tokenizer.tokenize(x['q2']), axis = 1)
         print('Questions Tokenized')
         
-        df['q1_stopwords'] = df.apply(lambda x: return_stopwords(x['q1_token']), axis = 1)
-        df['q2_stopwords'] = df.apply(lambda x: return_stopwords(x['q2_token']), axis = 1)
+        df['q1_stopwords'] = df.apply(lambda x: return_stopwords(x['q1_token'], stops = stops), axis = 1)
+        df['q2_stopwords'] = df.apply(lambda x: return_stopwords(x['q2_token'], stops = stops), axis = 1, stops = stops)
         print('Stopwords Retrieved')
         
-        df['q1_wo_stopwords'] = df.apply(lambda x: remove_stopwords(x['q1_token']), axis = 1)
-        df['q2_wo_stopwords'] = df.apply(lambda x: remove_stopwords(x['q2_token']), axis = 1)
+        df['q1_wo_stopwords'] = df.apply(lambda x: remove_stopwords(x['q1_token'], str2 = x['q1_stopwords']), axis = 1)
+        df['q2_wo_stopwords'] = df.apply(lambda x: remove_stopwords(x['q2_token'], str2 = x['q2_stopwords']), axis = 1)
         print('Stopwords Removed')
     
     features['jaccard_full'] = df.apply(lambda x: jaccard(x['q1_token'], x['q2_token']), axis = 1)
     features['jaccard_wo_stop'] = df.apply(lambda x: jaccard(x['q1_wo_stopwords'], x['q2_wo_stopwords']), axis = 1) 
     features['jaccard_of_stop'] = df.apply(lambda x: jaccard(x['q1_stopwords'], x['q2_stopwords']), axis = 1)
     features['full_fuzz_ratio'] = df.apply(lambda x: fuzz.ratio(x['q1'], x['q2'])/100., axis = 1)
+    
+    
+    '''
+    embedding_name = 'glove.6B.50d.w2v.txt'
+    if '.bin' in embedding_name:
+        binary = True
+    else: 
+        binary = False
+    
+    global word_vec
+    word_vec = models.KeyedVectors.load_word2vec_format('embeddings/{}'.format(embedding_name), binary = binary)
+    '''
+    
     
     return features, df
 
@@ -234,16 +257,7 @@ def main():
     clf, y_valid_hat, logloss = train_predict(features, labels)
     
     
-    '''
-    embedding_name = 'glove.6B.50d.w2v.txt'
-    if '.bin' in embedding_name:
-        binary = True
-    else: 
-        binary = False
     
-    global word_vec
-    word_vec = models.KeyedVectors.load_word2vec_format('embeddings/{}'.format(embedding_name), binary = binary)
-    '''
     
     print("Validation Logloss: {}".format(logloss))
     with open('clfs/NB_1.pickle', 'rw') as f:
