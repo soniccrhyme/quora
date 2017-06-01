@@ -3,7 +3,7 @@
 ---
 #### Quora Question Pairs
 
-[Kaggle Competition Link](https://www.kaggle.com/c/quora-question-pairs)
+[Kaggle Competition Link](https://www.kaggle.com/c/quora-question-pairs)  
 [Source Data](https://www.kaggle.com/c/quora-question-pairs/data)
 
 ---
