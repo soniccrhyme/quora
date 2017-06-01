@@ -12,12 +12,13 @@ import pickle, time, ast
 import numpy as np
 import scipy as sp
 import pandas as pd
-from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.metrics import log_loss
+from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import GaussianNB
 from sklearn.svm import SVC
-from sklearn.metrics import log_loss
+from xgboost import XGBClassifier
 from fuzzywuzzy import fuzz
-#from gensim import corpora, models, similarities
+from gensim import models
 #import spacy # Spacy uses GloVe word embeddings
 
 
@@ -26,20 +27,19 @@ from nltk.tokenize import RegexpTokenizer
 
 
 def load_data(test = False, extended = False):
+   
     if not extended:
-        train_df = pd.read_csv('data/train.csv', index_col = 'id')
+        train_df = pd.read_csv('data/train.csv', index_col = 'id', dtype = {'question1':str, 'question2':str})
         train_df.rename(columns = {'question1':'q1', 'question2':'q2'}, inplace = True)
-        train_df['q1'] = train_df['q1'].astype(str)
         train_df['q1'] = train_df.apply(lambda x: x['q1'].lower(), axis = 1)
-        train_df['q2'] = train_df['q2'].astype(str)
         train_df['q2'] = train_df.apply(lambda x: x['q2'].lower(), axis = 1)
+        train_df.fillna(value = '')
         if test:
-            test_df = pd.read_csv('data/test.csv', index_col = 'test_id')
+            test_df = pd.read_csv('data/test.csvt', index_col = 'test_id', dtype = {'question1':str, 'question2':str})
             test_df.rename(columns = {'question1':'q1', 'question2':'q2'}, inplace = True)
-            test_df['q1'] = test_df['q1'].astype(str)
             test_df['q1'] = test_df.apply(lambda x: x['q1'].lower(), axis = 1)
-            test_df['q2'] = test_df['q2'].astype(str)
             test_df['q2'] = test_df.apply(lambda x: x['q2'].lower(), axis = 1)
+            test_df.fillna(value = '')
             return train_df, test_df
         else:
             return train_df
@@ -47,15 +47,16 @@ def load_data(test = False, extended = False):
         
     elif extended:
         ext_keys = ['q1_token', 'q2_token','q1_stopwords', 'q2_stopwords', 'q1_wo_stopwords', 'q2_wo_stopwords']
+        train_df = pd.read_csv('data/train_extended.csv', index_col = 'id', dtype = {'q1':str, 'q2':str})
+        train_df.fillna(value = '')
         if test:
-            train_df = pd.read_csv('data/train_extended.csv', index_col = 'id')
-            test_df = pd.read_csv('data/test_extended.csv', index_col = 'test_id')
+            test_df = pd.read_csv('data/test_extended.csv', index_col = 'test_id', dtype = {'q1':str, 'q2':str})
+            test_df.fillna(value = '')
             for key in ext_keys:
                 train_df[key] = train_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
                 test_df[key] = test_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1 )
             return train_df, test_df
         else:
-            train_df = pd.read_csv('data/train_extended.csv', index_col = 'id')
             for key in ext_keys:
                 train_df[key] = train_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
             return train_df
@@ -113,15 +114,20 @@ def all_unique(str1, str2):
     return tot_unique
     
 def sep_unique(str1, str2):
+    '''
+    Return words unique to str1 (not in str2)
+    '''
     set1 = set(str1)
     set2 = set(str2)
     
-    unique1 = list(set1.difference(set2))
-    unique2 = list(set2.difference(set1))
+    unique = list(set1.difference(set2))
     
-    return unique1, unique2
+    return unique
 
 def return_stopwords(str1, stops = None):
+    '''
+    Return stopwords froms tring
+    '''
     if stops is None:
         stops = set(stopwords.words('english'))
     
@@ -133,6 +139,9 @@ def return_stopwords(str1, stops = None):
     return str_stopwords
 
 def remove_stopwords(str1, str2 = None, stops = None):
+    '''
+    Remove stopwords from string
+    '''
     if stops is None:
         stops = set(stopwords.words('english'))
         
@@ -149,6 +158,9 @@ def remove_stopwords(str1, str2 = None, stops = None):
     return str_wo_stopwords
 
 def return_specialchar(str1, tokenizer):
+    '''
+    Return special characters included in string
+    '''
     if str1[-1] == '?':
         str1 = str1[:-1]
     
@@ -158,6 +170,9 @@ def return_specialchar(str1, tokenizer):
     return spec_chars
 
 def create_doc_vec(str1, bed, agg_type = 'avg'):
+    '''
+    Given a sting tokenization, aggregate words' embeddings with given agg_type
+    '''
     eg_vec = bed.word_vec('machine')
     
     M_1 = []
@@ -183,7 +198,9 @@ def create_doc_vec(str1, bed, agg_type = 'avg'):
     return doc_vec
 
 def wordvec_similarity(str1, str2, bed, agg_type = 'avg'):
-
+    '''
+    Calculate word embedding similarity
+    '''
     doc_vec1 = create_doc_vec(str1, bed, agg_type = agg_type)
     doc_vec2 = create_doc_vec(str2, bed, agg_type = agg_type)
     
@@ -192,12 +209,17 @@ def wordvec_similarity(str1, str2, bed, agg_type = 'avg'):
     return similarity
     
 def wm_distance(str1, str2, bed):
-    
+    '''
+    Calculate Word-Mover distance
+    '''
     wm_dist = bed.wmdistance(str1, str2)
     
     return wm_dist
     
 def extend_data(df, extended):
+    '''
+    Extended og dataframe by adding columns of various string subset tokenizations
+    '''
     t_0 = time.time()
     stops = set(stopwords.words('english'))
     # Tokenize questions removing non alphanumeric characters
@@ -231,6 +253,9 @@ def extend_data(df, extended):
 
 
 def feature_gen(df, extended = None):
+    '''
+    Generate features given a dataframe of questions, tokens, etc.
+    '''
     features = pd.DataFrame(index = df.index)
     
     if type(extended) == str:
@@ -245,9 +270,25 @@ def feature_gen(df, extended = None):
     features['jaccard_wo_stop'] = df.apply(lambda x: jaccard(x['q1_wo_stopwords'], x['q2_wo_stopwords']), axis = 1) 
     features['jaccard_of_stop'] = df.apply(lambda x: jaccard(x['q1_stopwords'], x['q2_stopwords']), axis = 1)
     features['jaccard_specchar'] = df.apply(lambda x: jaccard(x['q1_specchar'], x['q2_specchar']), axis = 1)
-    features['full_fuzz_ratio'] = df.apply(lambda x: fuzz.ratio(x['q1'], x['q2'])/100., axis = 1)
+    features['full_fuzz_ratio'] = df.apply(lambda x: fuzz.ratio(x['q1_token'], x['q2_token'])/100., axis = 1)
     t_1 = time.time()
-    print('Features generated in {:.2f}'.format(t_1-t_0))
+    print('Jaccard-based features generated in {:.2f}s'.format(t_1-t_0))
+    
+    embedding_name = 'glove.6B.50d.w2v.txt'
+    if '.bin' in embedding_name:
+        binary = True
+    else: 
+        binary = False
+    word_vec = models.KeyedVectors.load_word2vec_format('embeddings/{}'.format(embedding_name), binary = binary)
+    t_2 = time.time()
+    print('Word embeddings loaded in {:.2f}s'.format(t_2-t_1))
+    features['full_similarity_avg'] = df.apply(lambda x: wordvec_similarity(x['q1_token'], x['q2_token'], word_vec, agg_type = 'avg'))
+    #similarity_avg'] = 
+    t_3 = time.time()
+    print('Similarity-based efatures generated in {:.2f}s'.format(t_3-t_2))
+    
+    t_end = time.time()
+    print('All features generated in {:.2f}'.format(t_end-t_0))
     
     '''
     embedding_name = 'glove.6B.50d.w2v.txt'
@@ -255,14 +296,30 @@ def feature_gen(df, extended = None):
         binary = True
     else: 
         binary = False
-    
-    global word_vec
     word_vec = models.KeyedVectors.load_word2vec_format('embeddings/{}'.format(embedding_name), binary = binary)
     '''
     return features
 
-def NB_clf(features, labels):
+def dump_classifier(clf, clf_name):
+    '''
+    Pickle classifier using clf_name
+    '''
+    if '.pickle' in clf_name:
+        pass
+    else:
+        clf_name += '.pickle'
+    with open('clfs/'+clf_name, 'wb') as f:
+        pickle.dump(clf, f)
+    f.close()
     
+    print('Classifier dumped to clfs/{}'.format(clf_name))
+    
+    return
+
+def NB_clf(features, labels):
+    '''
+    Train a Naive Bayes classifier. Return classifier, logloss scores & predictions
+    '''
     X_train, X_valid, y_train, y_valid = train_test_split(features, labels, test_size = 0.2)
     
     
@@ -277,24 +334,26 @@ def NB_clf(features, labels):
     logloss_train = log_loss(y_train, y_train_hat)
     logloss_valid = log_loss(y_valid, y_valid_hat)
     
-    # TODO: define naming convention
-    clf_name = 'NB_'+' '+'.pickle'
-    with open('clfs/'+clf_name, 'w') as f:
-        pickle.dump(clf, f)
-    f.close()
+    clf_name = 'SVC_{0}_{1:.3f}'.format(time.strftime('%m-%d-%H'), logloss_valid)+'.pickle'
+    dump_classifier(clf, clf_name)
     
     return clf, y_valid_hat, logloss_train, logloss_valid
 
-def SVC_clf(features, labels):
-    
+def SVC_clf(features, labels, clf_pickle = None):
+    '''
+    Train a SVC classifier. Return classifier, logloss scores & predictions
+    '''
     t_0 = time.time()
     X_train, X_valid, y_train, y_valid = train_test_split(features, labels, test_size = 0.2)
     
-    param_grid = {'kernel':['linear', 'rbf', 'poly', 'sigmoid'], 'C':[0.1, 1, 10], 'probability':[True]}
-    svc = SVC()
-    
-    clf = GridSearchCV(svc, param_grid)
-    
+    if clf_pickle == None:
+        
+        clf = SVC(kernel = 'rbf', probability = True)
+        
+    else:
+        clf = clf_pickle
+        
+        
     clf.fit(X_train, y_train)
     t_1 = time.time()
     print('Classifier Fit in {:.2f}s'.format(t_1-t_0))
@@ -306,15 +365,40 @@ def SVC_clf(features, labels):
     logloss_train = log_loss(y_train, y_train_hat)
     logloss_valid = log_loss(y_valid, y_valid_hat)
     
-    # TODO: define naming convention
-    clf_name = 'SVC_'+' '+'.pickle'
-    with open('clfs/'+clf_name, 'w') as f:
-        pickle.dump(clf, f)
-    f.close()
+    clf_name = 'SVC_{0}_{1:.3f}'.format(time.strftime('%m-%d-%H'), logloss_valid)+'.pickle'
+    dump_classifier(clf, clf_name)
     
     return clf, y_valid_hat, logloss_train, logloss_valid
 
-
+def xgb_clf(features, labels, clf_pickle = None):
+    '''
+    Train a xgb classifier. Return classifier, logloss scores & predictions
+    '''
+    print('Fittng XGBoost classifier...')
+    t_0 = time.time()
+    X_train, X_valid, y_train, y_valid = train_test_split(features, labels, test_size = 0.2)
+    
+    if clf_pickle == None:
+        clf = XGBClassifier()
+    
+    else:
+        clf = clf_pickle
+    
+    clf.fit(X_train, y_train)
+    t_1 = time.time()
+    print('Classifier Fit in {:.2f}s'.format(t_1-t_0))
+    
+    y_train_hat = clf.predict_proba(X_train)
+    y_valid_hat = clf.predict_proba(X_valid)
+    
+    
+    logloss_train = log_loss(y_train, y_train_hat)
+    logloss_valid = log_loss(y_valid, y_valid_hat)
+    
+    clf_name = 'SVC_{0}_{1:.3f}'.format(time.strftime('%m-%d-%H'), logloss_valid)+'.pickle'
+    dump_classifier(clf, clf_name)
+    
+    return clf, y_valid_hat, logloss_train, logloss_valid
 
 def main():
     extended = True
@@ -345,7 +429,8 @@ def main():
     assert features.shape[0] == labels.shape[0]
     
     #clf, y_valid_hat, logloss_train, logloss_valid = NB_clf(features, labels)
-    clf, y_valid_hat, logloss_train, logloss_valid = SVC_clf(features, labels)
+    #clf, y_valid_hat, logloss_train, logloss_valid = SVC_clf(features, labels)
+    clf, y_valid_hat, logloss_train, logloss_valid = xgb_clf(features, labels)
     
     print('Training Logloss: {}'.format(logloss_train))
     print("Validation Logloss: {}".format(logloss_valid))
