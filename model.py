@@ -12,6 +12,7 @@ import pickle, time, ast
 import numpy as np
 import scipy as sp
 import pandas as pd
+from nltk.tokenize import RegexpTokenizer
 from sklearn.metrics import log_loss
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import GaussianNB
@@ -19,7 +20,7 @@ from sklearn.svm import SVC
 from xgboost import XGBClassifier
 from fuzzywuzzy import fuzz
 from gensim import models
-#import spacy # Spacy uses GloVe word embeddings
+import spacy # Spacy uses GloVe word embeddings
 
 
 from nltk.corpus import stopwords
@@ -33,13 +34,13 @@ def load_data(test = False, extended = False):
         train_df.rename(columns = {'question1':'q1', 'question2':'q2'}, inplace = True)
         train_df['q1'] = train_df.apply(lambda x: x['q1'].lower(), axis = 1)
         train_df['q2'] = train_df.apply(lambda x: x['q2'].lower(), axis = 1)
-        train_df.fillna(value = '')
+        train_df.fillna(value = '', inplace = True)
         if test:
             test_df = pd.read_csv('data/test.csvt', index_col = 'test_id', dtype = {'question1':str, 'question2':str})
             test_df.rename(columns = {'question1':'q1', 'question2':'q2'}, inplace = True)
             test_df['q1'] = test_df.apply(lambda x: x['q1'].lower(), axis = 1)
             test_df['q2'] = test_df.apply(lambda x: x['q2'].lower(), axis = 1)
-            test_df.fillna(value = '')
+            test_df.fillna(value = '', inplace = True)
             return train_df, test_df
         else:
             return train_df
@@ -48,10 +49,10 @@ def load_data(test = False, extended = False):
     elif extended:
         ext_keys = ['q1_token', 'q2_token','q1_stopwords', 'q2_stopwords', 'q1_wo_stopwords', 'q2_wo_stopwords']
         train_df = pd.read_csv('data/train_extended.csv', index_col = 'id', dtype = {'q1':str, 'q2':str})
-        train_df.fillna(value = '')
+        train_df.fillna(value = '', inplace = True)
         if test:
             test_df = pd.read_csv('data/test_extended.csv', index_col = 'test_id', dtype = {'q1':str, 'q2':str})
-            test_df.fillna(value = '')
+            test_df.fillna(value = '', inplace = True)
             for key in ext_keys:
                 train_df[key] = train_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
                 test_df[key] = test_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1 )
@@ -175,7 +176,10 @@ def create_doc_vec(str1, bed, agg_type = 'avg'):
     '''
     eg_vec = bed.word_vec('machine')
     
+    
     M_1 = []
+    if len(str1) == 0:
+        M_1.append(np.zeros_like(eg_vec))
     for w in str1:
         try:
             w_vec = bed.word_vec(w)
@@ -194,10 +198,12 @@ def create_doc_vec(str1, bed, agg_type = 'avg'):
     else:
         raise IOError('sim_type input must be in [avg, max, min]')
     
-        
+    assert doc_vec.shape[0] == 50
+    
     return doc_vec
 
 def wordvec_similarity(str1, str2, bed, agg_type = 'avg'):
+    # Value error @ inded = 3306
     '''
     Calculate word embedding similarity
     '''
@@ -274,6 +280,7 @@ def feature_gen(df, extended = None):
     t_1 = time.time()
     print('Jaccard-based features generated in {:.2f}s'.format(t_1-t_0))
     
+    '''
     embedding_name = 'glove.6B.50d.w2v.txt'
     if '.bin' in embedding_name:
         binary = True
@@ -282,22 +289,22 @@ def feature_gen(df, extended = None):
     word_vec = models.KeyedVectors.load_word2vec_format('embeddings/{}'.format(embedding_name), binary = binary)
     t_2 = time.time()
     print('Word embeddings loaded in {:.2f}s'.format(t_2-t_1))
-    features['full_similarity_avg'] = df.apply(lambda x: wordvec_similarity(x['q1_token'], x['q2_token'], word_vec, agg_type = 'avg'))
-    #similarity_avg'] = 
+    '''
+    nlp = spacy.load('en')
+    
+    features['full_similarity_spacy'] = df.apply(lambda x: nlp(x['q1']).similarity(nlp(x['q2'])), axis = 1)
+    features['unique_similarity_spacy'] = df.apply(lambda x: nlp(' '.join(sep_unique(x['q1_token'], x['q2_token']))).similarity(nlp(' '.join(sep_unique(x['q2_token'], x['q1_token'])))), axis = 1) 
     t_3 = time.time()
-    print('Similarity-based efatures generated in {:.2f}s'.format(t_3-t_2))
+    print('Similarity-based efatures generated in {:.2f}s'.format(t_3-t_1))
+    
+    features['q1_word_count'] = df.apply(lambda x: len(x['q1_token']), axis = 1)
+    features['q2_word_count'] = df.apply(lambda x: len(x['q2_token']), axis = 1)
+    features['q1_char_count'] = df.apply(lambda x: len(x['q1']), axis = 1)
+    features['q2_char_count'] = df.apply(lambda x: len(x['q2']), axis = 1)
     
     t_end = time.time()
     print('All features generated in {:.2f}'.format(t_end-t_0))
     
-    '''
-    embedding_name = 'glove.6B.50d.w2v.txt'
-    if '.bin' in embedding_name:
-        binary = True
-    else: 
-        binary = False
-    word_vec = models.KeyedVectors.load_word2vec_format('embeddings/{}'.format(embedding_name), binary = binary)
-    '''
     return features
 
 def dump_classifier(clf, clf_name):
