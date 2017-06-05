@@ -12,8 +12,6 @@ import pickle, time, ast
 import numpy as np
 import scipy
 import pandas as pd
-from nltk.tokenize import RegexpTokenizer
-from nltk.corpus import stopwords
 from fuzzywuzzy import fuzz
 #from gensim import models
 import spacy # Spacy uses GloVe word embeddings
@@ -28,53 +26,26 @@ test_size = 2345796
 
 
 
-def load_data(test = False, extended = False):
+def load_data(test = False):
     '''
     Load data from different csv files depending on mode.
     Extended already contains the fields generated in extend_data()
     '''
-   
-    if not extended:
-        train_df = pd.read_csv('data/train_checked.csv', index_col = 'id', dtype = {'question1':str, 'question2':str})
-        train_df.rename(columns = {'question1':'q1', 'question2':'q2'}, inplace = True)
-        train_df.fillna(value = '', inplace = True)
-        train_df['q1'] = train_df.apply(lambda x: x['q1'].lower(), axis = 1)
-        train_df['q2'] = train_df.apply(lambda x: x['q2'].lower(), axis = 1)
-        if test:
-            test_df = pd.read_csv('data/test_checked.csv', index_col = 'test_id', dtype = {'question1':str, 'question2':str})
-            test_df.rename(columns = {'question1':'q1', 'question2':'q2'}, inplace = True)
-            test_df.fillna(value = '', inplace = True)
-            test_df['q1'] = test_df.apply(lambda x: x['q1'].lower(), axis = 1)
-            test_df['q2'] = test_df.apply(lambda x: x['q2'].lower(), axis = 1)
-            return train_df, test_df
-        else:
-            return train_df
         
-        
-    elif extended:
-        ext_keys = ['q1_token', 'q2_token','q1_stopwords', 'q2_stopwords', 'q1_wo_stopwords', 'q2_wo_stopwords']
-        train_df = pd.read_csv('data/train_extended.csv', index_col = 'id', dtype = {'q1':str, 'q2':str})
-        train_df.fillna(value = '', inplace = True)
-        if test:
-            test_df = pd.read_csv('data/test_extended.csv', index_col = 'test_id', dtype = {'q1':str, 'q2':str})
-            test_df.fillna(value = '', inplace = True)
-            for key in ext_keys:
-                train_df[key] = train_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
-                test_df[key] = test_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1 )
-            return train_df, test_df
-        else:
-            for key in ext_keys:
-                train_df[key] = train_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
-            return train_df
-
-# TODO: create method for returning question list & freq
-def create_question_list(train, test):
-    questions_df = None
-    
-    
-    
-    return questions_df
-    
+    ext_keys = ['q1_token', 'q2_token','q1_stopwords', 'q2_stopwords', 'q1_wo_stopwords', 'q2_wo_stopwords']
+    train_df = pd.read_csv('data/train_extended.csv', index_col = 'id', dtype = {'q1':str, 'q2':str})
+    train_df.fillna(value = '', inplace = True)
+    if test:
+        test_df = pd.read_csv('data/test_extended.csv', index_col = 'test_id', dtype = {'q1':str, 'q2':str})
+        test_df.fillna(value = '', inplace = True)
+        for key in ext_keys:
+            train_df[key] = train_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
+            test_df[key] = test_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1 )
+        return train_df, test_df
+    else:
+        for key in ext_keys:
+            train_df[key] = train_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
+        return train_df
 
 def jaccard(str1, str2):
     '''
@@ -131,55 +102,6 @@ def word_share(str1, str2):
     
     return word_share
 
-def return_stopwords(str1, stops = None):
-    '''
-    Return stopwords froms tring
-    '''
-    if stops is None:
-        stops = set(stopwords.words('english'))
-    
-    set1 = set(str1)
-    stops = set(stopwords.words('english'))
-    
-    str_stopwords = list(set1 & stops)
-    
-    return str_stopwords
-
-def remove_stopwords(str1, str2 = None, stops = None):
-    '''
-    Remove stopwords from string
-    str2, if present, = stopwords in str1 from return stopwords above
-    '''
-    if stops is None:
-        stops = set(stopwords.words('english'))
-        
-    if str2 == None:
-        set1 = set(str1)
-        
-        str_wo_stopwords = list(set1.difference(stops))
-    
-    else:
-        set1 = set(str1)
-        set2 = set(str2)
-        str_wo_stopwords = list(set1.difference(set2))
-    
-    return str_wo_stopwords
-
-def return_specialchar(str1, tokenizer):
-    '''
-    Return special characters included in string
-    '''
-    if len(str1) == 0:
-        return []
-    
-    if str1[-1] == '?':
-        str1 = str1[:-1]
-    
-    spec_chars = tokenizer.tokenize(str1)
-    spec_chars = [x.strip() for x in spec_chars if x != ' ']
-    
-    return spec_chars
-
 def create_doc_matrix(str1, bed_dict):
     '''
     Given a sting tokenization, aggregate words' embeddings with given agg_type
@@ -224,6 +146,19 @@ def vec_similarity(str1, str2, bed_dict, agg_type = 'avg', sim_type = 'cosine'):
         else:
             similarity = 1-scipy.spatial.distance.cosine(s1_vec, s2_vec)
             return similarity
+    
+    
+    # TODO: Finish implementing additional similarity functions
+    elif sim_type == 'euclidean':
+        
+        return
+    elif sim_type == 'manhattan':
+        
+        return
+    elif sim_type == 'correlation':
+        
+        return 
+        
 
 '''
 #DEPRECATED
@@ -245,53 +180,11 @@ def normalize(features, labels = None):
     return features
 
 
-def extend_data(df, extended):
-    '''
-    Extended og dataframe by adding columns of various string subset tokenizations
-    '''
-    t_0 = time.time()
-    # Tokenize questions removing non alphanumeric characters
-    tokenizer = RegexpTokenizer(r'\w+')
-    df['q1_token'] = df.apply(lambda x: tokenizer.tokenize(x['q1']), axis = 1)
-    df['q2_token'] = df.apply(lambda x: tokenizer.tokenize(x['q2']), axis = 1)
-    t_1 = time.time()
-    print('Questions Tokenized in {:.2f}s'.format(t_1-t_0))
-    
-    # Keep stopwords
-    stops = set(stopwords.words('english'))
-    df['q1_stopwords'] = df.apply(lambda x: return_stopwords(x['q1_token'], stops = stops), axis = 1)
-    df['q2_stopwords'] = df.apply(lambda x: return_stopwords(x['q2_token'], stops = stops), axis = 1)
-    t_2 = time.time()
-    print('Stopwords Retrieved in {:.2f}'.format(t_2- t_1))
-    
-    # Keep questions w/o stopwords
-    df['q1_wo_stopwords'] = df.apply(lambda x: remove_stopwords(x['q1_token'], str2 = x['q1_stopwords']), axis = 1)
-    df['q2_wo_stopwords'] = df.apply(lambda x: remove_stopwords(x['q2_token'], str2 = x['q2_stopwords']), axis = 1)
-    t_3 = time.time()
-    print('Stopwords Removed in {:.2f}'.format(t_3- t_2))
-    
-    # Keep special characters
-    spec_char_tokenizer = RegexpTokenizer(r'\W+')
-    df['q1_specchar'] = df.apply(lambda x: return_specialchar(x['q1'], spec_char_tokenizer), axis = 1)
-    df['q2_specchar'] = df.apply(lambda x: return_specialchar(x['q2'], spec_char_tokenizer), axis = 1)
-    t_4 = time.time()
-    print('Special Characters Retrieved in {:.2f}'.format(t_4- t_3))
-    
-    df.to_csv('data/{}.csv'.format(extended))
-    return df
-
-
-def feature_gen(df, extended = None):
+def feature_gen(df):
     '''
     Generate features given a dataframe of questions, tokens, etc.
     '''
     features = pd.DataFrame(index = df.index)
-    
-    if type(extended) == str:
-        df = extend_data(df, extended)
-        
-    elif extended:
-        pass
     
     t_0 = time.time()
         
@@ -344,7 +237,7 @@ def feature_gen(df, extended = None):
         q_count = pd.read_csv('data/test_checked_q_count.csv', index_col = 'test_id')
     features['q1_freq'] = q_count['q1_freq']
     features['q2_freq'] = q_count['q2_freq']
-    features['q1_q2_intersection'] = q_count['q1_q2_intersection']
+    features['q1_q2_intersect'] = q_count['q1_q2_intersection']
     del q_count
     t_5 = time.time()
     print('Question frequency features added in {:.2f}s'.format(t_5-t_2))
@@ -478,43 +371,38 @@ def create_prediction_file(features_test, clf, sub_name):
 
 def main():
     # Mode defining parameters
-    extended = True
-    # TODO: Change load_test to testing_mode (inverse)
-    load_test = False
+    testing = True
     train_features_file = None
     test_features_file = None
-    print('Mode: extended: {}, load_test: {}'.format(extended, load_test))
+    if testing:
+        print('Mode: Testing')
+    else:
+        print('Mode: Predicting')
     
     # Load data based on mode
-    if load_test:
-        train_df, test_df = load_data(test = load_test, extended = extended)
+    if not testing:
+        train_df, test_df = load_data(test = not testing)
         print('Train & Test Loaded')
     else:
-        train_df = load_data(test = load_test, extended = extended)
+        train_df = load_data(test = not testing)
         print('Train Loaded')
         
-    # Generate features based on mode
-    
-    if extended == True:
-        if train_features_file == None:
-            features = feature_gen(train_df, extended = None)
-        else:
-            features = pd.read_csv(train_features_file, index_col = 'id')
-        if load_test:
-            if test_features_file == None: 
-                features_test = feature_gen(test_df, extended = None)
-            else:
-                features_test = pd.read_csv(test_features_file, index_col = 'id')
+    # Generate features if features file not provided
+    if train_features_file == None:
+        features = feature_gen(train_df)
     else:
-        # If train_extended exists, set extended to None to prevent from regenerating train_extended again
-        features = feature_gen(train_df, extended = 'train_extended')
-        if load_test:
-            features_test = feature_gen(test_df, extended = 'test_extended')
+        features = pd.read_csv(train_features_file, index_col = 'id')
+    if not testing:
+        if test_features_file == None: 
+            features_test = feature_gen(test_df)
+        else:
+            features_test = pd.read_csv(test_features_file, index_col = 'id')
+    
     
     # Save features to csv
     features.to_csv('data/features.csv')
     print('Train features saved to features.csv')
-    if load_test:
+    if not testing:
         features_test.to_csv('data/features_test.csv')
         print('Test features saved to features_test.csv')
         
@@ -534,7 +422,7 @@ def main():
     print(feature_importance)
     
     # Create prediction file
-    if load_test:
+    if not testing:
         create_prediction_file(features_test, clf)
 
 
