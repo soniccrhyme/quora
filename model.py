@@ -39,12 +39,22 @@ def load_data(test = False):
         test_df = pd.read_csv('data/test_extended.csv', index_col = 'test_id', dtype = {'q1':str, 'q2':str})
         test_df.fillna(value = '', inplace = True)
         for key in ext_keys:
+            #train_df[key] = [ast.literal_eval(x) for x in train_df[key].tolist()]
             train_df[key] = train_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
-            test_df[key] = test_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1 )
+            #test_df[key] = [ast.literal_eval(x) for x in test_df[key].tolist()]
+            test_df[key] = test_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
         return train_df, test_df
     else:
         for key in ext_keys:
             train_df[key] = train_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
+        return train_df
+
+def load_data_from_pickle(test = False):
+    train_df = pd.read_pickle('data/train_extended.pickle')
+    if test:
+        test_df = pd.read_pickle('data/test_extended.pickle')
+        return train_df, test_df
+    else:
         return train_df
 
 def jaccard(str1, str2):
@@ -59,6 +69,23 @@ def jaccard(str1, str2):
         jaccard = 0
     
     return jaccard
+
+def jaccard_list(list1, list2):
+    out = []
+    
+    assert len(list1) == len(list2)
+    for i in range(len(list1)):
+        set1 = set(list1[i])
+        set2 = set(list2[i])
+        try:
+            jaccard = float(len((set1 & set2)))/float(len((set1 | set2)))
+        except ZeroDivisionError:
+            jaccard = 0
+        out.append(jaccard)
+    return out
+        
+        
+    
     
 
 def common_words(str1, str2):
@@ -232,8 +259,39 @@ def weighted_vec_similarity(str1, str2, bed_dict, idfs, sim_type = 'cosine'):
             return similarity
     
     
+def weighted_docvec(str1, str2, bed_dict, idfs):
+    '''
+    Calculate word embedding similarity weighted by idf
+    '''
+    M_s1 = create_doc_matrix(str1, bed_dict, idfs = idfs)
+    M_s2 = create_doc_matrix(str2, bed_dict, idfs = idfs)
     
-    return
+    eg = bed_dict['the']
+    
+    s1_weights = []
+    for s in str1:
+        if (s in idfs.keys()) & (s in bed_dict.keys()):
+            s1_weights.append(idfs[s])
+        else:
+            s1_weights.append(0)
+    s2_weights = []
+    for s in str2:
+        if (s in idfs.keys()) & (s in bed_dict.keys()):
+            s2_weights.append(idfs[s])
+        else:
+            s2_weights.append(0)
+    if np.sum(s1_weights) == 0:
+        s1_vec = np.zeros_like(eg)
+    else:
+        s1_vec = np.average(np.array(M_s1), weights = s1_weights, axis = 0)
+    if np.sum(s2_weights) == 0:
+        s2_vec = np.zeros_like(eg)
+    else:
+        s2_vec = np.average(np.array(M_s2), weights = s2_weights, axis = 0)
+        
+    out = np.append(s1_vec, s2_vec, axis = 0)
+        
+    return out
         
 
 '''
@@ -256,7 +314,7 @@ def normalize(features, labels = None):
     return features
 
 
-def feature_gen(df):
+def feature_gen(df, embedding_dict):
     '''
     Generate features given a dataframe of questions, tokens, etc.
     '''
@@ -265,71 +323,77 @@ def feature_gen(df):
     t_0 = time.time()
         
     # Jaccard features
-    features['jaccard_full'] = df.apply(lambda x: jaccard(x['q1_token'], x['q2_token']), axis = 1)
-    features['jaccard_wo_stop'] = df.apply(lambda x: jaccard(x['q1_wo_stopwords'], x['q2_wo_stopwords']), axis = 1) 
-    features['jaccard_of_stop'] = df.apply(lambda x: jaccard(x['q1_stopwords'], x['q2_stopwords']), axis = 1)
-    features['jaccard_specchar'] = df.apply(lambda x: jaccard(x['q1_specchar'], x['q2_specchar']), axis = 1)
+    features['jaccard_full'] = jaccard_list(df.q1_token.tolist(), df.q2_token.tolist())
+    features['jaccard_wo_stop'] = jaccard_list(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())
+    features['jaccard_of_stop'] = jaccard_list(df.q1_stopwords.tolist(), df.q2_stopwords.tolist())
+    features['jaccard_specchar'] = jaccard_list(df.q1_specchar.tolist(), df.q2_specchar.tolist())
     t_1 = time.time()
-    print('Jaccard-based features generated in {:.2f}s'.format(t_1-t_0))
+    print('Jaccard-based features generated in {:.2f}s @ {}'.format(t_1-t_0, time.strftime('%H:%M', time.localtime())))
     print(features.shape)
     assert features.shape[0] == df.shape[0]
     
     # Fuzzywuzzy features
-    features['fuzz_QRatio_full'] = df.apply(lambda x: fuzz.QRatio(x['q1'], x['q2'])/100., axis = 1)
-    features['fuzz_QRatio_tks'] = df.apply(lambda x: fuzz.QRatio(' '.join(x['q1_token']), ' '.join(x['q2_token']))/100., axis = 1)
-    features['fuzz_WRatio_full'] = df.apply(lambda x: fuzz.WRatio(x['q1'], x['q2'])/100., axis = 1)
-    features['fuzz_WRatio_tks'] = df.apply(lambda x: fuzz.WRatio(' '.join(x['q1_token']), ' '.join(x['q2_token']))/100., axis = 1)
-    features['fuzz_partial_full'] = df.apply(lambda x: fuzz.partial_ratio(x['q1'], x['q2'])/100., axis = 1)
-    features['fuzz_partial_tks'] = df.apply(lambda x: fuzz.partial_ratio(' '.join(x['q1_token']), ' '.join(x['q2_token']))/100., axis = 1)
-    features['fuzz_partknset_full'] = df.apply(lambda x: fuzz.partial_token_set_ratio(x['q1'], x['q2'])/100., axis = 1)
-    features['fuzz_partknset_tks'] = df.apply(lambda x: fuzz.partial_token_set_ratio(' '.join(x['q1_token']), ' '.join(x['q2_token']))/100., axis = 1)
-    features['fuzz_partknsort_full'] = df.apply(lambda x: fuzz.partial_token_sort_ratio(x['q1'], x['q2'])/100., axis = 1)
-    features['fuzz_partknsort_tks'] = df.apply(lambda x: fuzz.partial_token_sort_ratio(' '.join(x['q1_token']), ' '.join(x['q2_token']))/100., axis = 1)
-    features['fuzz_tknset_full'] = df.apply(lambda x: fuzz.token_set_ratio(x['q1'], x['q2'])/100., axis = 1)
-    features['fuzz_tknset_tks'] = df.apply(lambda x: fuzz.token_set_ratio(' '.join(x['q1_token']), ' '.join(x['q2_token']))/100., axis = 1)
-    features['fuzz_tknsort_full'] = df.apply(lambda x: fuzz.token_sort_ratio(x['q1'], x['q2'])/100., axis = 1)
-    features['fuzz_tknsort_tks'] = df.apply(lambda x: fuzz.token_sort_ratio(' '.join(x['q1_token']), ' '.join(x['q2_token']))/100., axis = 1)
+    features['fuzz_QRatio_full'] = [fuzz.QRatio(x, y)/100. for x,y in zip(df.q1.tolist(), df.q2.tolist())]
+    features['fuzz_QRatio_tks'] = [fuzz.QRatio(x, y)/100. for x,y in zip(df.q1_token.tolist(), df.q2_token.tolist())]
+    features['fuzz_WRatio_full'] = [fuzz.WRatio(x, y)/100. for x,y in zip(df.q1.tolist(), df.q2.tolist())]
+    features['fuzz_WRatio_tks'] = [fuzz.WRatio(x, y)/100. for x,y in zip(df.q1_token.tolist(), df.q2_token.tolist())]
+    features['fuzz_partial_full'] = [fuzz.partial_ratio(x, y)/100. for x,y in zip(df.q1.tolist(), df.q2.tolist())] 
+    features['fuzz_partial_tks'] = [fuzz.partial_ratio(' '.join(x), ' '.join(y))/100. for x,y in zip(df.q1_token.tolist(), df.q2_token.tolist())] 
+    features['fuzz_partknset_full'] = [fuzz.partial_token_set_ratio(x, y)/100. for x,y in zip(df.q1.tolist(), df.q2.tolist())]
+    features['fuzz_partknset_tks'] = [fuzz.partial_token_set_ratio(' '.join(x), ' '.join(y))/100. for x,y in zip(df.q1_token.tolist(), df.q2_token.tolist())]
+    features['fuzz_partknsort_full'] = [fuzz.partial_token_sort_ratio(x, y)/100. for x,y in zip(df.q1.tolist(), df.q2.tolist())]
+    features['fuzz_partknsort_tks']  = [fuzz.partial_token_sort_ratio(' '.join(x), ' '.join(y))/100. for x,y in zip(df.q1_token.tolist(), df.q2_token.tolist())]
+    
+    features['fuzz_tknset_full'] = [fuzz.token_set_ratio(x, y)/100. for x,y in zip(df.q1.tolist(), df.q2.tolist())]
+    features['fuzz_tknset_tks'] = [fuzz.token_set_ratio(' '.join(x), ' '.join(y))/100. for x,y in zip(df.q1_token.tolist(), df.q2_token.tolist())]
+    features['fuzz_tknsort_full'] = [fuzz.token_sort_ratio(x, y)/100. for x,y in zip(df.q1.tolist(), df.q2.tolist())]
+    features['fuzz_tknsort_tks'] = [fuzz.token_sort_ratio(' '.join(x), ' '.join(y))/100. for x,y in zip(df.q1_token.tolist(), df.q2_token.tolist())]
     t_1_2 = time.time()
-    print('Fuzzywuzzy based features generated in {:.2f}'.format(t_1_2-t_1))
+    print('Fuzzywuzzy based features generated in {:.2f} @ {}'.format(t_1_2-t_1, time.strftime('%H:%M', time.localtime())))
     print(features.shape)
-    assert features.shape[0] == df.shape[0]
+    #assert features.shape[0] == df.shape[0]
     
     
     nlp = spacy.load('en')
-    embedding_name = 'wiki.en.vec.pickle'
-    with open('embeddings/{}'.format(embedding_name), 'rb') as f:
-        embedding_dict = pickle.load(f)
-    f.close()
-    t_1_3 = time.time()
-    print('Embedding loaded from {} in {:.2f}s'.format(embedding_name, t_1_3-t_1_2))
+    
+    
     # Embedding similarity features, via Spacy
-    features['similarity_spacy_full'] = df.apply(lambda x: nlp(' '.join(x['q1_token'])).similarity(nlp(' '.join(x['q2_token']))), axis = 1)
-    features['similarity_spacy_unique'] = df.apply(lambda x: nlp(' '.join(sep_unique(x['q1_token'], x['q2_token']))).similarity(nlp(' '.join(sep_unique(x['q2_token'], x['q1_token'])))), axis = 1)
-    features['sim_min_cosine'] = df.apply(lambda x: vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, agg_type = 'min'), axis = 1)
-    features['sim_max_cosine'] = df.apply(lambda x: vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, agg_type = 'max'), axis = 1)
-    features['sim_avg_euclid'] = df.apply(lambda x: vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, agg_type = 'avg', sim_type = 'euclidean'), axis = 1)
-    features['sim_max_euclid'] = df.apply(lambda x: vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, agg_type = 'max', sim_type = 'euclidean'), axis = 1)
-    features['sim_min_euclid'] = df.apply(lambda x: vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, agg_type = 'min', sim_type = 'euclidean'), axis = 1)
-    features['sim_avg_manhattan'] = df.apply(lambda x: vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, agg_type = 'avg', sim_type = 'manhattan'), axis = 1)
-    features['sim_max_manhattan'] = df.apply(lambda x: vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, agg_type = 'max', sim_type = 'manhattan'), axis = 1)
-    features['sim_min_manhattan'] = df.apply(lambda x: vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, agg_type = 'min', sim_type = 'manhattan'), axis = 1)
-    features['sim_avg_correlation'] = df.apply(lambda x: vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, agg_type = 'avg', sim_type = 'correlation'), axis = 1)
-    features['sim_max_correlation'] = df.apply(lambda x: vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, agg_type = 'max', sim_type = 'correlation'), axis = 1)
-    features['sim_min_correlation'] = df.apply(lambda x: vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, agg_type = 'min', sim_type = 'correlation'), axis = 1)
-    print(features.shape)
-    assert features.shape[0] == df.shape[0]
+    features['similarity_spacy_full'] = [nlp(' '.join(x)).similarity(nlp(' '.join(y))) for x,y in zip(df.q1_token.tolist(), df.q2_token.tolist())]
+    features['similarity_spacy_unique'] = [nlp(' '.join(sep_unique(x, y))).similarity(nlp(' '.join(sep_unique(y, x)))) for x,y in zip(df.q1_token.tolist(), df.q2_token.tolist())]
+    
+    
+    features['sim_min_cosine'] = [vec_similarity(x,y, embedding_dict, agg_type = 'min') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    features['sim_max_cosine'] = [vec_similarity(x,y, embedding_dict, agg_type = 'max') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    
+    features['sim_avg_euclid'] = [vec_similarity(x,y, embedding_dict, agg_type = 'avg', sim_type = 'euclidean') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    features['sim_max_euclid'] = [vec_similarity(x,y, embedding_dict, agg_type = 'max', sim_type = 'euclidean') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    features['sim_min_euclid'] = [vec_similarity(x,y, embedding_dict, agg_type = 'min', sim_type = 'euclidean') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    
+    
+    features['sim_avg_manhattan'] = [vec_similarity(x,y, embedding_dict, agg_type = 'avg', sim_type = 'manhattan') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    features['sim_max_manhattan'] = [vec_similarity(x,y, embedding_dict, agg_type = 'max', sim_type = 'manhattan') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    features['sim_min_manhattan'] = [vec_similarity(x,y, embedding_dict, agg_type = 'min', sim_type = 'manhattan') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    
+    features['sim_avg_correlation'] = [vec_similarity(x,y, embedding_dict, agg_type = 'avg', sim_type = 'correlation') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    features['sim_max_correlation'] = [vec_similarity(x,y, embedding_dict, agg_type = 'max', sim_type = 'correlation') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    features['sim_min_correlation'] = [vec_similarity(x,y, embedding_dict, agg_type = 'min', sim_type = 'correlation') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    #assert features.shape[0] == df.shape[0]
     # Load idfs for weighted_averages
     with open('data/idf_weights.pickle', 'rb') as f:
         idfs = pickle.load(f)
     f.close()
-    features['sim_weighted_avg_cosine'] = df.apply(lambda x: weighted_vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, idfs, sim_type = 'cosine'), axis = 1)
-    features['sim_weighted_avg_euclid'] = df.apply(lambda x: weighted_vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, idfs, sim_type = 'euclidean'), axis = 1)
-    features['sim_weighted_avg_manhattan'] = df.apply(lambda x: weighted_vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, idfs, sim_type = 'manhattan'), axis = 1)
-    features['sim_weighted_avg_correlation'] = df.apply(lambda x: weighted_vec_similarity(x['q1_token'], x['q2_token'], embedding_dict, idfs, sim_type = 'correlation'), axis = 1)
+    
+    
+    features['sim_weighted_avg_cosine'] = [weighted_vec_similarity(x,y, embedding_dict, idfs, sim_type = 'cosine') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    features['sim_weighted_avg_euclid'] = [weighted_vec_similarity(x,y, embedding_dict, idfs, sim_type = 'euclidean') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    features['sim_weighted_avg_manhattan'] = [weighted_vec_similarity(x,y, embedding_dict, idfs, sim_type = 'manhattan') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    features['sim_weighted_avg_correlation'] = [weighted_vec_similarity(x,y, embedding_dict, idfs, sim_type = 'correlation') for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    
+    
     t_2 = time.time()
-    print('Spacy-based similarity features generated in {:.2f}s'.format(t_2-t_1_2))
+    print('Similarity features generated in {:.2f}s @ {}'.format(t_2-t_1_2, time.strftime('%H:%M', time.localtime())))
     print(features.shape)
-    assert features.shape[0] == df.shape[0]
+    #assert features.shape[0] == df.shape[0]
     
     
     
@@ -343,30 +407,51 @@ def feature_gen(df):
     features['q1_q2_intersect'] = q_count['q1_q2_intersect']
     del q_count
     t_5 = time.time()
-    print('Question frequency features added in {:.2f}s'.format(t_5-t_2))
+    print('Question frequency features added in {:.2f}s @ {}'.format(t_5-t_2, time.strftime('%H:%M', time.localtime())))
     print(features.shape)
-    assert features.shape[0] == df.shape[0]
+    #assert features.shape[0] == df.shape[0]
     
     
     # Word-Share Features
-    features['q1_in_q2'] = df.apply(lambda x: word_share(x['q1_token'], x['q2_token']), axis = 1)
-    features['q1_in_q2'] = df.apply(lambda x: word_share(x['q2_token'], x['q1_token']), axis = 1)
+    features['q1_in_q2'] = [word_share(x,y) for x,y in zip(df.q1_token.tolist(), df.q2_token.tolist())]
+    features['q2_in_q1'] = [word_share(x,y) for x,y in zip(df.q2_token.tolist(), df.q1_token.tolist())]
     
     # Generic count features
-    features['q1_word_count'] = df.apply(lambda x: len(x['q1_token']), axis = 1)
-    features['q2_word_count'] = df.apply(lambda x: len(x['q2_token']), axis = 1)
-    features['q1_char_len'] = df.apply(lambda x: len(x['q1'].replace(' ', '')), axis = 1)
-    features['q2_char_len'] = df.apply(lambda x: len(x['q2'].replace(' ', '')), axis = 1)
-    features['q1_len'] = df.apply(lambda x: len(x['q1']), axis = 1)
-    features['q2_len'] = df.apply(lambda x: len(x['q2']), axis = 1)
+    features['q1_word_count'] = [len(x) for x in df.q1_token.tolist()]
+    features['q2_word_count'] = [len(x) for x in df.q2_token.tolist()]
+    
+    
+    features['q1_char_len'] = [len(x.replace(' ', '')) for x in df.q1.tolist()]
+    features['q2_char_len'] = [len(x.replace(' ', '')) for x in df.q2.tolist()]
+    
+    features['q1_len'] = [len(x) for x in df.q1.tolist()]
+    features['q2_len'] = [len(x) for x in df.q2.tolist()]
     
     t_end = time.time()
-    print('All features generated in {:.2f}; {} rows'.format(t_end-t_0, features.shape[0]))
+    print('All features generated in {:.2f} @ {}; {} rows'.format(t_end-t_0, time.strftime('%H:%M', time.localtime()), features.shape[0]))
     print(features.shape)
-    assert features.shape[0] == df.shape[0]
+    #assert features.shape[0] == df.shape[0]
     
     
     return features
+
+def docvec_feature_gen(df, embedding_dict):
+    
+    
+    
+    with open('data/idf_weights.pickle', 'rb') as f:
+        idfs = pickle.load(f)
+    f.close()
+    
+    columns = ['q1_vec_'+ str(x) for x in range(300)]
+    columns += ['q2_vec_'+str(x) for x in range(300)]
+    
+    features = pd.DataFrame(columns = columns, index = df.index)
+    
+    features.loc[:,:] = [weighted_docvec(x, y, embedding_dict, idfs) for x,y in zip(df.q1_wo_stopwords.tolist(), df.q2_wo_stopwords.tolist())]
+    
+    return features
+
 
 
 def get_feature_importance(clf = None, clf_name = None):
@@ -451,20 +536,6 @@ def xgb_clf(features, labels, clf_pickle = None):
     return clf, y_all_hat, y_all_hat_prob, logloss_train, logloss_valid
 
 
-def keras_clf(features, labels, clf_pickle = None):
-    
-    
-    
-    
-    
-    
-    
-    
-    
-    return 
-
-
-
 def create_prediction_file(features_test, clf, sub_name):
     
     predictions = pd.DataFrame(index = features_test.index)
@@ -472,22 +543,23 @@ def create_prediction_file(features_test, clf, sub_name):
     predictions['is_duplicate'] = clf.predict_proba(features_test)[0]
     
     sub_name = sub_name
-    predictions.to_csv('submissions/{}.csv'.format(sub_name), )
+    predictions.to_pickle('submissions/{}.pickle'.format(sub_name))
     
     return
 
 def main():
     # Mode defining parameters
-    testing = True
-    sample = True
+    testing = False
+    sample = False
     if not testing:
+
         assert not sample
         
     # Use preexisting features files, if specified
     train_features_file = None
     test_features_file = None
-    #train_features_file = 'data/features.csv'
-    #test_features_file = 'data/features_test.csv'
+    #train_features_file = 'data/features.pickle'
+    #test_features_file = 'data/features_test.pickle'
     
     if testing:
         if sample:
@@ -496,11 +568,12 @@ def main():
             print('Mode: Testing')
     else:
         print('Mode: Predicting')
+    print('Generating features started @ {}'.format(time.strftime('%H:%M', time.localtime())))
     
     # Load data based on mode
     t_0 = time.time()
     if not testing:
-        train_df, test_df = load_data(test = not testing)
+        train_df, test_df = load_data_from_pickle(test = testing)
         t_1 = time.time()
         print('Train & Test Loaded in {:.2f}s'.format(t_1-t_0))
     else:
@@ -508,30 +581,53 @@ def main():
         t_1 = time.time()
         print('Train Loaded in {:.2f}s'.format(t_1-t_0))
         
+    # Load embedding
+    t_0 = time.time()
+    embedding_name = 'wiki.en.vec.pickle'
+    with open('embeddings/{}'.format(embedding_name), 'rb') as f:
+        embedding_dict = pickle.load(f)
+    f.close()
+    t_1 = time.time()
+    print('Embedding loaded from {} in {:.2f}s @ {}'.format(embedding_name, t_1-t_0, time.strftime('%H:%M', time.localtime())))
+        
     # Generate features if features file not provided
     if train_features_file == None:
         if sample:
             train_df = train_df.sample(n = 25000)
-        features = feature_gen(train_df)
+        print('Generating Train Features...')
+        features = feature_gen(train_df, embedding_dict)
         assert features.shape[0] == train_df.shape[0]
+        print('features with {} rows'.format(features.shape[0]))
+        features_docvec = docvec_feature_gen(train_df, embedding_dict)
+        print('features_docvec with {} rows'.format(features_docvec.shape[0]))
+        features = pd.concat([features, features_docvec])
+        print('features generated with shape {}'.format(features.shape))
         # Save features to csv
         if not sample:
-            features.to_csv('data/features.csv')
-            print('Train features saved to features.csv')
+            features.to_pickle('data/features.pickle')
+            print('Train features saved to features.pickle')
         if sample:
-            features.to_csv('data/features_sample.csv')
+            features.to_pickle('data/features_sample.pickle')
             print('Sample of Train features saved to features_sample.csv')
     else:
-        features = pd.read_csv(train_features_file, index_col = 'id')
+        features = pd.read_pickle(train_features_file)
         print('features_train loaded from {}'.format(train_features_file))
     
+    # Generate/load test features if in prediction mode
     if not testing:
         if test_features_file == None: 
-            features_test = feature_gen(test_df)
-            features_test.to_csv('data/features_test.csv')
-            print('Test features saved to features_test.csv')
+            print('Generating Test Features...')
+            features_test = feature_gen(test_df, embedding_dict)
+            assert features_test.shape[0] == test_df.shape[0]
+            print('test features generated with {} rows'.format(features_test.shape[0]))
+            features_docvec_test = docvec_feature_gen(test_df, embedding_dict)
+            print('docvec test features generated with {} rows'.format(features_docvec_test.shape[0]))
+            assert features_docvec_test.shape[0] == test_df.shape[0]
+            features = pd.concat([features_test, features_docvec_test])
+            features_test.to_pickle('data/features_test.pickle')
+            print('Test features saved to features_test.pickle')
         else:
-            features_test = pd.read_csv(test_features_file, index_col = 'id')
+            features_test = pd.read_pickle(test_features_file)
             print('features_test loaded from {}'.format(test_features_file))
     
         
@@ -556,13 +652,14 @@ def main():
     print(feature_importance)
     
     # Create prediction file
+    
     if not testing:
         sub_name = 'predictions_{:.3f}_{}'.format(logloss_valid, time.strftime('%m-%d-%H-%M'))
         create_prediction_file(features_test, clf, sub_name)
-    
+    '''
     # Create and save report highlighting wrong predictions
     report_wrong_preds(labels, y_all_hat, y_all_hat_prob, train_df)
-    
+    '''
     
     
     
