@@ -48,6 +48,18 @@ def load_data(test = False):
         for key in ext_keys:
             train_df[key] = train_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
         return train_df
+    
+def load_test():
+    ext_keys = ['q1_token', 'q2_token','q1_stopwords', 'q2_stopwords', 'q1_wo_stopwords', 'q2_wo_stopwords']
+    test_df = pd.read_csv('data/test_extended.csv', index_col = 'test_id', dtype = {'q1':str, 'q2':str})
+    print('raw test loaded')
+    test_df.fillna(value = '', inplace = True)
+    for key in ext_keys:
+        #test_df[key] = [ast.literal_eval(x) for x in test_df[key].tolist()]
+        test_df[key] = test_df.apply(lambda x: ast.literal_eval(x[key]), axis = 1)
+    return test_df
+    
+
 
 def load_data_from_pickle(test = False):
     train_df = pd.read_pickle('data/train_extended.pickle')
@@ -549,17 +561,17 @@ def create_prediction_file(features_test, clf, sub_name):
 
 def main():
     # Mode defining parameters
-    testing = False
+    testing = True
     sample = False
     if not testing:
 
         assert not sample
         
     # Use preexisting features files, if specified
-    train_features_file = None
+    #train_features_file = None
     test_features_file = None
-    #train_features_file = 'data/features.pickle'
-    #test_features_file = 'data/features_test.pickle'
+    train_features_file = 'data/features.pickle'
+    #test_features_file = 'data/features_w_docvec_test.pickle'
     
     if testing:
         if sample:
@@ -573,11 +585,11 @@ def main():
     # Load data based on mode
     t_0 = time.time()
     if not testing:
-        train_df, test_df = load_data_from_pickle(test = testing)
+        train_df, test_df = load_data_from_pickle(test = not testing)
         t_1 = time.time()
         print('Train & Test Loaded in {:.2f}s'.format(t_1-t_0))
     else:
-        train_df = load_data(test = not testing)
+        train_df = load_data_from_pickle(test = not testing)
         t_1 = time.time()
         print('Train Loaded in {:.2f}s'.format(t_1-t_0))
         
@@ -600,7 +612,7 @@ def main():
         print('features with {} rows'.format(features.shape[0]))
         features_docvec = docvec_feature_gen(train_df, embedding_dict)
         print('features_docvec with {} rows'.format(features_docvec.shape[0]))
-        features = pd.concat([features, features_docvec])
+        features = pd.concat([features, features_docvec], axis = 1)
         print('features generated with shape {}'.format(features.shape))
         # Save features to csv
         if not sample:
@@ -632,7 +644,7 @@ def main():
     
         
     # Define labels
-    labels = train_df['is_duplicate']
+    labels = train_df.loc[:, 'is_duplicate']
     
     assert features.shape[0] == labels.shape[0]
     
@@ -644,7 +656,7 @@ def main():
     
     # Pickle classifier
     if not sample:
-        clf_name = 'xgb_{0}_{1:.3f}'.format(time.strftime('%m-%d-%H-%M'), logloss_valid)+'.pickle'
+        clf_name = 'xgb_{0}_{2}f_{1:.3f}'.format(time.strftime('%m-%d-%H-%M'), logloss_valid, features.shape[0])+'.pickle'
         dump_classifier(clf, clf_name)
     
     # Get and print feature importance
@@ -656,10 +668,9 @@ def main():
     if not testing:
         sub_name = 'predictions_{:.3f}_{}'.format(logloss_valid, time.strftime('%m-%d-%H-%M'))
         create_prediction_file(features_test, clf, sub_name)
-    '''
+        
     # Create and save report highlighting wrong predictions
     report_wrong_preds(labels, y_all_hat, y_all_hat_prob, train_df)
-    '''
     
     
     
